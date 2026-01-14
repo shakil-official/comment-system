@@ -2,6 +2,7 @@ import React, {type FormEvent, useEffect, useState} from "react";
 import {useDispatch, useSelector} from "react-redux";
 import {useNavigate} from "react-router-dom";
 import {loginRequest} from "~/store/auth/authSlice";
+import {toast} from "react-hot-toast";
 
 export default function Login() {
     const [email, setEmail] = useState("");
@@ -10,8 +11,17 @@ export default function Login() {
     const navigate = useNavigate();
     const {loading, user} = useSelector((state: any) => state.auth);
 
+    const validateEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+    const validatePassword = (value: string) => /^\d{6}$/.test(value);
+
     const handleSubmit = (e: FormEvent) => {
         e.preventDefault();
+
+        if (!email) return toast.error("Email is required");
+        if (!validateEmail(email)) return toast.error("Enter a valid email address");
+        if (!password) return toast.error("Password is required");
+        if (!validatePassword(password)) return toast.error("Password must be exactly 6 digits");
+
         dispatch(loginRequest({email, password}));
     };
 
@@ -33,6 +43,7 @@ export default function Login() {
                     type="email"
                     placeholder="Email"
                     value={email}
+                    required={true}
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full px-4 py-2 mb-4 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
@@ -41,6 +52,7 @@ export default function Login() {
                     type="password"
                     placeholder="6-digit Password"
                     value={password}
+                    required={true}
                     onChange={(e) => setPassword(e.target.value)}
                     maxLength={6}
                     className="w-full px-4 py-2 mb-6 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
