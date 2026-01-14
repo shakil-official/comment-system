@@ -1,9 +1,8 @@
-import {useState} from "react";
+import React, {type FormEvent, useState} from "react";
 import toast from "react-hot-toast";
 import AuthRedirectLink from "~/components/AuthRedirectLink";
 import {useDispatch} from "react-redux";
 import {loginRequest} from "~/store/auth/authSlice";
-
 
 
 export default function Login() {
@@ -17,7 +16,7 @@ export default function Login() {
     const validatePassword = (value: string) =>
         /^\d{6}$/.test(value);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = (e: FormEvent) => {
         e.preventDefault();
 
         if (!email) return toast.error("Email is required");
