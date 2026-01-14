@@ -1,15 +1,17 @@
-import mongoose, { Schema, Document } from "mongoose";
+import mongoose, {Schema, Document} from "mongoose";
 import bcrypt from "bcryptjs";
 
 export interface IUser extends Document {
+    name?: string;
     email: string;
     password: string;
     comparePassword(candidatePassword: string): Promise<boolean>;
 }
 
 const userSchema = new Schema<IUser>({
-    email: { type: String, required: true, unique: true },
-    password: { type: String, required: true },
+    name: {type: String},
+    email: {type: String, required: true, unique: true},
+    password: {type: String, required: true},
 });
 
 userSchema.pre("save", async function (this: IUser) {

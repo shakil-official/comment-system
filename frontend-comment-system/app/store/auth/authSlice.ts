@@ -1,4 +1,11 @@
-import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
+import {createSlice, type PayloadAction} from "@reduxjs/toolkit";
+
+type User = {
+    _id: string;
+    name? : string;
+    email: string;
+    token: string;
+};
 
 type AuthState = {
     loading: boolean;
@@ -28,6 +35,25 @@ const authSlice = createSlice({
             state.loading = false;
             state.error = action.payload;
         },
+
+        // Registration
+        registerRequest(state, action: PayloadAction<{name : string, email: string; password: string }>) {
+            state.loading = true;
+            state.error = null;
+        },
+        registerSuccess(state, action: PayloadAction<User>) {
+            state.loading = false;
+            state.user = action.payload; // automatically logged in
+        },
+        registerFailure(state, action: PayloadAction<string>) {
+            state.loading = false;
+            state.error = action.payload;
+        },
+
+        logout(state) {
+            state.user = null;
+            localStorage.removeItem("token");
+        },
     },
 });
 
@@ -35,6 +61,10 @@ export const {
     loginRequest,
     loginSuccess,
     loginFailure,
+    registerRequest,
+    registerSuccess,
+    registerFailure,
+    logout,
 } = authSlice.actions;
 
 export default authSlice.reducer;

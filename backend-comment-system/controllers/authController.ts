@@ -11,7 +11,7 @@ export const register = async (
     next: NextFunction
 ) => {
     try {
-        const {email, password} = req.body;
+        const {name, email, password} = req.body;
 
         // Validate input
         if (!email || !password) {
@@ -25,7 +25,7 @@ export const register = async (
         }
 
         // Create user (pre-save hook will hash password)
-        const user = await User.create({email, password});
+        const user = await User.create({name, email, password});
 
         // Generate JWT
         const token = generateToken(user._id.toString());
@@ -33,6 +33,7 @@ export const register = async (
         // Send response
         res.status(201).json({
             _id: user._id,
+            name: user.name,
             email: user.email,
             token,
         });
