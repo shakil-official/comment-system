@@ -1,10 +1,15 @@
-import { useState } from "react";
+import {useState} from "react";
 import toast from "react-hot-toast";
 import AuthRedirectLink from "~/components/AuthRedirectLink";
+import {useDispatch} from "react-redux";
+import {loginRequest} from "~/store/auth/authSlice";
+
+
 
 export default function Login() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const dispatch = useDispatch();
 
     const validateEmail = (value: string) =>
         /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -24,7 +29,10 @@ export default function Login() {
             return toast.error("Password must be exactly 6 digits");
 
         toast.success("Login successful");
-        console.log({ email, password });
+
+        dispatch(loginRequest({ email, password }));
+
+        console.log({email, password});
     };
 
     return (
