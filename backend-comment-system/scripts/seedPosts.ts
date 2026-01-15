@@ -7,42 +7,52 @@ dotenv.config();
 const postsData = [
     {
         title: "Post 1",
+        user_id: 1,
         description: "This is a sample description for post 1. ".repeat(10),
     },
     {
         title: "Post 2",
+        user_id: 1,
         description: "This is a sample description for post 2. ".repeat(10),
     },
     {
         title: "Post 3",
+        user_id: 1,
         description: "This is a sample description for post 3. ".repeat(10),
     },
     {
         title: "Post 4",
+        user_id: 1,
         description: "This is a sample description for post 4. ".repeat(10),
     },
     {
         title: "Post 5",
+        user_id: 1,
         description: "This is a sample description for post 5. ".repeat(10),
     },
     {
         title: "Post 6",
+        user_id: 1,
         description: "This is a sample description for post 6. ".repeat(10),
     },
     {
         title: "Post 7",
+        user_id: 1,
         description: "This is a sample description for post 7. ".repeat(10),
     },
     {
         title: "Post 8",
+        user_id: 1,
         description: "This is a sample description for post 8. ".repeat(10),
     },
     {
         title: "Post 9",
+        user_id: 1,
         description: "This is a sample description for post 9. ".repeat(10),
     },
     {
         title: "Post 10",
+        user_id: 1,
         description: "This is a sample description for post 10. ".repeat(10),
     },
 ];
