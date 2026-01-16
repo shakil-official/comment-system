@@ -6,3 +6,5 @@
 /.react-router/
 /build/
 .idea
+/backend-comment-system/node_modules
+/frontend-comment-system/node_modules
