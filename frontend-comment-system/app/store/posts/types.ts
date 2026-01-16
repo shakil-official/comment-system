@@ -9,7 +9,10 @@ export interface Comment {
     parent?: string | null;
     post: string;
     favorites?: string[];
-    date?: string;
+    dislikes?: string[];
+    createdAt?: string;
+    updatedAt?: string;
+    children?: Comment[];
 }
 
 export interface Post {

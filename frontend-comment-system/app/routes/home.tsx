@@ -1,6 +1,8 @@
 import type {Route} from "./+types/home";
 import PostList from "~/components/PostList";
 import PostListContainer from "~/components/PostListContainer";
+import Header from "~/components/Header";
+import React from "react";
 
 export function meta({}: Route.MetaArgs) {
     return [
@@ -14,6 +16,7 @@ export default function Home() {
     return (
         <>
 
+            <Header/>
             <PostListContainer/>
 
         </>

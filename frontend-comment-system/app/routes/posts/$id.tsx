@@ -1,291 +1,451 @@
-import React, {useEffect, useState} from "react";
+import React, {type JSX, useEffect, useState, useRef, useCallback} from "react";
 import {useParams} from "react-router-dom";
-import axios from "axios";
+import {useDispatch, useSelector} from "react-redux";
+import {io, Socket} from "socket.io-client";
+import type {RootState} from "~/store"; // Adjust to your store path
 
-// -----------------------------
-// Types
-// -----------------------------
-interface User {
-    _id: string;
-    name: string;
-    email: string;
-}
+import {
+    fetchPostAndCommentsStart,
+    socketAddComment,
+    socketUpdateComment,
+    socketDeleteComment,
+    socketUpdateReaction,
+    updateReactionOptimistic,
+    createCommentStart,
+    editCommentStart,
+    deleteCommentStart,
+    toggleReactionStart,
+} from "~/store/posts/postSlice";
 
-interface Comment {
-    _id: string;
-    message: string;
-    user?: User;
-    parent?: string | null;
-    favorites?: string[];
-    createdAt?: string;
-    updatedAt?: string;
-    children?: Comment[];
-}
+import type {Comment, Post} from "~/store/posts/postSlice";
+import Header from "~/components/Header";
 
-interface Post {
-    _id: string;
-    title: string;
-    description: string;
-    user?: User;
-    status?: "active" | "inactive";
-    date?: string;
-}
+const normalizeComment = (c: any): Comment => ({
+    ...c,
+    favorites: Array.isArray(c.favorites) ? c.favorites : [],
+    dislikes: Array.isArray(c.dislikes) ? c.dislikes : [],
+    favoritesCount: Number(c.favoritesCount) || 0,
+    dislikesCount: Number(c.dislikesCount) || 0,
+    children: Array.isArray(c.children) ? c.children.map(normalizeComment) : [],
+});
 
-interface Pagination {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-}
+const addCommentToTree = (comments: Comment[], newComment: Comment): Comment[] => {
+    if (!newComment.parent) return [newComment, ...comments];
+    return comments.map((c) => {
+        if (c._id === newComment.parent) {
+            return {...c, children: [...(c.children || []), newComment]};
+        }
+        if (c.children?.length) {
+            return {...c, children: addCommentToTree(c.children, newComment)};
+        }
+        return c;
+    });
+};
 
-// -----------------------------
-// Component
-// -----------------------------
+const updateCommentInTree = (
+    comments: Comment[],
+    commentId: string,
+    updater: (c: Comment) => Comment
+): Comment[] =>
+    comments.map((c) => {
+        if (c._id === commentId) return updater(c);
+        if (c.children?.length) {
+            return {...c, children: updateCommentInTree(c.children, commentId, updater)};
+        }
+        return c;
+    });
+
+const removeCommentFromTree = (comments: Comment[], commentId: string): Comment[] =>
+    comments
+        .filter((c) => c._id !== commentId)
+        .map((c) => ({
+            ...c,
+            children: c.children ? removeCommentFromTree(c.children, commentId) : [],
+        }));
+
 export default function PostDetail() {
     const {id} = useParams<{ id: string }>();
+    const dispatch = useDispatch();
 
-    const [post, setPost] = useState<Post | null>(null);
-    const [comments, setComments] = useState<Comment[]>([]);
-    const [pagination, setPagination] = useState<Pagination>({
-        total: 0,
-        page: 1,
-        limit: 10,
-        totalPages: 0,
-    });
-    const [loadingPost, setLoadingPost] = useState(true);
-    const [loadingComments, setLoadingComments] = useState(true);
+    const {singlePost: post, comments, commentsLoading, currentUserId} = useSelector(
+        (state: RootState) => state.posts
+    );
+
     const [newComment, setNewComment] = useState("");
     const [replyTo, setReplyTo] = useState<string | null>(null);
+    const [editingId, setEditingId] = useState<string | null>(null);
+    const [editText, setEditText] = useState("");
+    const [pendingReactions, setPendingReactions] = useState<Set<string>>(new Set());
 
-    // -----------------------------
-    // Fetch post + comments
-    // -----------------------------
-    const fetchPost = async (page = 1) => {
-        try {
-            setLoadingPost(true);
-            setLoadingComments(true);
+    const commentsContainerRef = useRef<HTMLDivElement>(null);
+    const scrollPositions = useRef<Map<string, number>>(new Map());
 
-            const res = await axios.get(
-                `http://localhost:5000/api/post/${id}?page=${page}&limit=100`
-            );
-            setPost(res.data.post);
-            setComments(res.data.comments);
-            setPagination(res.data.pagination);
-        } catch (err) {
-            console.error(err);
-        } finally {
-            setLoadingPost(false);
-            setLoadingComments(false);
+    const [socket, setSocket] = useState<Socket | null>(null);
+
+    // Fetch data + setup socket
+    useEffect(() => {
+        if (!id) return;
+
+        dispatch(fetchPostAndCommentsStart({postId: id}));
+
+        const newSocket = io(import.meta.env.VITE_API_SOCKET);
+        setSocket(newSocket);
+        newSocket.emit("joinPost", id);
+
+        newSocket.on("comment:new", (comment: any) => {
+            const normalized = normalizeComment(comment);
+            dispatch(socketAddComment(normalized));
+        });
+
+        newSocket.on("comment:update", (updated: any) => {
+            const normalized = normalizeComment(updated);
+            dispatch(socketUpdateComment(normalized));
+        });
+
+        newSocket.on("comment:delete", ({commentId}: { commentId: string }) => {
+            dispatch(socketDeleteComment(commentId));
+        });
+
+        newSocket.on("comment:reaction", ({
+                                              commentId,
+                                              favoritesCount,
+                                              dislikesCount,
+                                              favorites = [],
+                                              dislikes = []
+                                          }) => {
+            dispatch(socketUpdateReaction({commentId, favorites, dislikes, favoritesCount, dislikesCount}));
+        });
+
+        return () => {
+            newSocket.disconnect();
+        };
+    }, [id, dispatch]);
+
+    // Save scroll position before update
+    const saveScrollPosition = useCallback(() => {
+        if (commentsContainerRef.current) {
+            scrollPositions.current.set("comments", commentsContainerRef.current.scrollTop);
         }
-    };
+    }, []);
+
+    // Restore scroll after update
+    const restoreScrollPosition = useCallback(() => {
+        if (commentsContainerRef.current) {
+            const saved = scrollPositions.current.get("comments");
+            if (saved !== undefined) {
+                commentsContainerRef.current.scrollTop = saved;
+            }
+        }
+    }, []);
 
     useEffect(() => {
-        fetchPost();
-    }, [id]);
+        const timer = setTimeout(restoreScrollPosition, 50);
+        return () => clearTimeout(timer);
+    }, [comments, restoreScrollPosition]);
 
-    // -----------------------------
-    // Pagination
-    // -----------------------------
-    const loadCommentsPage = (page: number) => {
-        fetchPost(page);
-    };
-
-    // -----------------------------
-    // Post a new comment / reply
-    // -----------------------------
-    const handleSubmitComment = async () => {
+    // Submit comment
+    const handleSubmit = () => {
         if (!newComment.trim() || !post) return;
+        const token = localStorage.getItem("token");
+        if (!token) return alert("Please login first");
 
-        const token = localStorage.getItem("token"); // JWT
+        saveScrollPosition();
 
-        try {
-            await axios.post(
-                "http://localhost:5000/api/post/comment/create",
-                {
-                    message: newComment,
-                    postId: post._id,
-                    parentId: replyTo,
-                },
-                {
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                    },
-                }
-            );
-
-            setNewComment("");
-            setReplyTo(null);
-            loadCommentsPage(pagination.page);
-        } catch (err) {
-            console.error(err);
-        }
+        dispatch(createCommentStart({
+            message: newComment,
+            postId: post._id,
+            parentId: replyTo,
+        }));
+        setNewComment("");
+        setReplyTo(null);
     };
 
-    // -----------------------------
-    // Toggle favorite
-    // -----------------------------
-    const toggleFavorite = async (commentId: string) => {
-        try {
-            await axios.patch(
-                `http://localhost:5000/api/post/favorite/${commentId}`,
-                {},
-                {
-                    headers: {Authorization: `Bearer ${localStorage.getItem("token")}`},
-                }
-            );
-            loadCommentsPage(pagination.page);
-        } catch (err) {
-            console.error(err);
-        }
+    // Edit
+    const handleEdit = (commentId: string) => {
+        if (!editText.trim()) return;
+        const token = localStorage.getItem("token");
+        if (!token) return alert("Please login");
+
+        saveScrollPosition();
+
+        dispatch(editCommentStart({
+            commentId,
+            message: editText,
+        }));
+        setEditingId(null);
+        setEditText("");
     };
 
-    // -----------------------------
-    // Render nested comments recursively
-    // -----------------------------
-    const renderComments = (commentsList: Comment[], level = 0) => {
-        return commentsList.map((comment) => (
-            <div
-                key={comment._id}
-                className="mt-4"
-                style={{marginLeft: `${level * 20}px`}} // dynamic indentation
-            >
-                <div className="flex flex-col p-3 border border-gray-200 rounded-lg bg-white">
-                    <div className="flex items-center gap-3">
-                        {/* Avatar */}
-                        <div
-                            className="shrink-0 w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold">
-                            {comment.user?.name?.charAt(0).toUpperCase() || "A"}
+    // Delete
+    const handleDelete = (commentId: string) => {
+        if (!window.confirm("Delete this comment?")) return;
+        const token = localStorage.getItem("token");
+        if (!token) return alert("Please login");
+
+        saveScrollPosition();
+
+        dispatch(deleteCommentStart({commentId}));
+    };
+
+    const toggleReaction = useCallback(
+        (commentId: string, type: "like" | "dislike") => {
+            if (!currentUserId) {
+                alert("Please login to react");
+                return;
+            }
+            if (pendingReactions.has(commentId)) return;
+
+            setPendingReactions((prev) => new Set([...prev, commentId]));
+
+            saveScrollPosition();
+
+            // Optimistic update
+            dispatch(updateReactionOptimistic({commentId, type, userId: currentUserId}));
+
+            // Dispatch to saga for API call
+            dispatch(toggleReactionStart({commentId, type}));
+
+            dispatch(fetchPostAndCommentsStart({postId: id}));
+
+
+        },
+        [currentUserId, pendingReactions, saveScrollPosition, dispatch]
+    );
+
+    // Cleanup pending after reaction (assuming socket updates it)
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setPendingReactions(new Set());
+        }, 1000); // Arbitrary delay to clear pending
+        return () => clearTimeout(timer);
+    }, [comments]);
+
+    const renderCommentsFn = (list: Comment[], level = 0): JSX.Element[] => {
+        return list.map((comment) => {
+            if (!comment?._id) return null as any;
+
+            const isOwn = currentUserId === comment.user?._id;
+            const isEditing = editingId === comment._id;
+            const indent = level * 24;
+            const isPending = pendingReactions.has(comment._id);
+
+
+            const favorites = Array.isArray(comment.favorites) ? comment.favorites : [];
+            const dislikes = Array.isArray(comment.dislikes) ? comment.dislikes : [];
+
+            const hasLiked = favorites.includes(currentUserId ?? "");
+            const hasDisliked = dislikes.includes(currentUserId ?? "");
+
+
+            return (
+                <div key={comment._id} style={{marginLeft: `${indent}px`}} className="mt-5">
+                    <div className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow">
+                        <div className="flex justify-between items-start gap-4">
+                            <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1.5">
+                                    <span className="font-semibold text-gray-900">
+                                        {comment.user?.name || "Anonymous"}
+                                    </span>
+                                    {isOwn && (
+                                        <span
+                                            className="text-xs bg-blue-100 text-blue-700 px-2.5 py-0.5 rounded-full font-medium">
+                                            You
+                                        </span>
+                                    )}
+                                    <span className="text-xs text-gray-500">
+                                        {comment.createdAt && new Date(comment.createdAt).toLocaleString()}
+                                    </span>
+                                </div>
+
+                                {isEditing ? (
+                                    <div className="mt-3">
+                                        <textarea
+                                            value={editText}
+                                            onChange={(e) => setEditText(e.target.value)}
+                                            className="w-full p-3 border border-gray-300 rounded text-sm resize-none focus:ring-2 focus:ring-blue-400"
+                                            rows={3}
+                                        />
+                                        <div className="mt-3 flex gap-3 justify-end">
+                                            <button
+                                                onClick={() => {
+                                                    setEditingId(null);
+                                                    setEditText("");
+                                                }}
+                                                className="px-4 py-1.5 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm"
+                                            >
+                                                Cancel
+                                            </button>
+                                            <button
+                                                onClick={() => handleEdit(comment._id)}
+                                                className="px-4 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+                                            >
+                                                Save
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <p className="text-gray-800 whitespace-pre-wrap break-words leading-relaxed">
+                                        {comment.message}
+                                    </p>
+                                )}
+                            </div>
+
+                            <div className="flex flex-col items-end gap-3">
+                                <div className="flex gap-5 text-sm font-medium">
+                                    <button
+                                        onClick={() => toggleReaction(comment._id, "like")}
+                                        disabled={isPending}
+                                        className={`flex items-center gap-1.5 transition-all ${
+                                            hasLiked
+                                                ? "text-red-600 font-bold scale-110"
+                                                : "text-gray-600 hover:text-red-500"
+                                        } ${isPending ? "opacity-50 cursor-wait" : ""}`}
+                                    >
+                                        ♥ {comment.favoritesCount}
+                                    </button>
+
+                                    <button
+                                        onClick={() => toggleReaction(comment._id, "dislike")}
+                                        disabled={isPending}
+                                        className={`flex items-center gap-1.5 transition-all ${
+                                            hasDisliked
+                                                ? "text-blue-600 font-bold scale-110"
+                                                : "text-gray-600 hover:text-blue-600"
+                                        } ${isPending ? "opacity-50 cursor-wait" : ""}`}
+                                    >
+                                        👎 {comment.dislikesCount}
+                                    </button>
+                                </div>
+
+                                <div className="flex gap-4 text-xs text-blue-600">
+                                    <button onClick={() => setReplyTo(comment._id)} className="hover:underline">
+                                        Reply
+                                    </button>
+
+                                    {isOwn && !isEditing && (
+                                        <>
+                                            <button
+                                                onClick={() => {
+                                                    setEditingId(comment._id);
+                                                    setEditText(comment.message);
+                                                }}
+                                                className="hover:underline text-green-600"
+                                            >
+                                                Edit
+                                            </button>
+                                            <button
+                                                onClick={() => handleDelete(comment._id)}
+                                                className="hover:underline text-red-600"
+                                            >
+                                                Delete
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
                         </div>
 
-                        {/* User info */}
-                        <div className="flex flex-col">
-                            <span className="text-sm font-semibold text-gray-800">
-                              {comment.user?.name || "Anonymous"}
-                            </span>
-                            <span className="text-xs text-gray-500">{comment.user?.email}</span>
-                        </div>
+                        {replyTo === comment._id && (
+                            <div className="mt-5 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                <div className="text-sm text-blue-600 mb-3 font-medium">
+                                    Replying to {comment.user?.name || "Anonymous"}
+                                </div>
+                                <textarea
+                                    value={newComment}
+                                    onChange={(e) => setNewComment(e.target.value)}
+                                    placeholder="Write your reply..."
+                                    className="w-full p-3 border border-gray-300 rounded text-sm resize-none focus:ring-2 focus:ring-blue-400"
+                                    rows={3}
+                                />
+                                <div className="mt-3 flex gap-3 justify-end">
+                                    <button
+                                        onClick={() => {
+                                            setReplyTo(null);
+                                            setNewComment("");
+                                        }}
+                                        className="px-4 py-1.5 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={handleSubmit}
+                                        disabled={!newComment.trim()}
+                                        className={`px-5 py-1.5 rounded text-white text-sm transition ${
+                                            newComment.trim() ? "bg-blue-600 hover:bg-blue-700" : "bg-blue-400 cursor-not-allowed"
+                                        }`}
+                                    >
+                                        Post Reply
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {comment.children?.length ? (
+                            <div className="mt-5">{renderCommentsFn(comment.children, level + 1)}</div>
+                        ) : null}
                     </div>
-
-                    <div className="flex justify-between items-start">
-                        <div>
-                            <p className="text-sm font-semibold">{comment.user?.name || "Anonymous"}</p>
-                            <p className="text-gray-700 mt-1 break-all">{comment.message}</p>
-                            <p className="text-xs text-gray-400 mt-1">
-                                {comment.createdAt && new Date(comment.createdAt).toLocaleString()}
-                            </p>
-                        </div>
-                        <button
-                            className={`text-sm ${
-                                comment.favorites?.length ? "text-red-500" : "text-gray-400"
-                            }`}
-                            onClick={() => toggleFavorite(comment._id)}
-                        >
-                            ♥ {comment.favorites?.length || 0}
-                        </button>
-                    </div>
-
-                    {/* Reply button */}
-                    <button
-                        className="text-xs text-blue-600 mt-2"
-                        onClick={() => setReplyTo(comment._id)}
-                    >
-                        Reply
-                    </button>
                 </div>
+            );
 
-                {/* Recursively render children */}
-                {comment.children && comment.children.length > 0 &&
-                    renderComments(comment.children, level + 1)}
-            </div>
-        ));
+
+        }) as JSX.Element[];
     };
 
-    // -----------------------------
-    // Loading skeleton
-    // -----------------------------
-    if (loadingPost) {
-        return (
-            <div className="container mx-auto p-4 max-w-2xl animate-pulse">
-                <div className="h-6 bg-gray-300 w-3/4 mb-3 rounded"></div>
-                <div className="h-4 bg-gray-300 w-full mb-2 rounded"></div>
-                <div className="h-4 bg-gray-300 w-full mb-2 rounded"></div>
-            </div>
-        );
-    }
 
-    if (!post) return <p className="text-center mt-10 text-red-500">Post not found</p>;
+    if (commentsLoading) return <div className="text-center py-20 text-gray-600">Loading...</div>;
+    if (!post) return <div className="text-center py-20 text-red-600">Post not found</div>;
 
     return (
-        <div className="container mx-auto p-4 max-w-2xl">
-            {/* Post */}
-            <h1 className="text-3xl font-bold mb-4">{post.title}</h1>
-            <p className="text-gray-700 leading-relaxed mb-6">{post.description}</p>
+        <>
+            <Header/>
+            <div className="max-w-4xl mx-auto px-4 py-10">
+                {/* Post Header */}
+                <div className="bg-white p-7 rounded-2xl shadow-sm mb-10 border border-gray-100">
+                    <h1 className="text-3xl font-bold mb-4 text-gray-900">{post.title}</h1>
+                    <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">{post.description}</p>
+                </div>
 
-            {/* New comment input */}
-            <div className="flex flex-col mb-4">
-        <textarea
-            value={newComment}
-            onChange={(e) => setNewComment(e.target.value)}
-            placeholder={replyTo ? "Reply..." : "Add a comment..."}
-            className="border border-gray-300 rounded p-2 mb-2 resize-none"
-        />
-                <div className="flex gap-2">
-                    {replyTo && (
-                        <button
-                            onClick={() => setReplyTo(null)}
-                            className="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300"
-                        >
-                            Cancel Reply
-                        </button>
+                {/* Top level comment input */}
+                {!replyTo && (
+                    <div className="bg-white p-6 rounded-2xl shadow-sm mb-10 border border-gray-100">
+                    <textarea
+                        value={newComment}
+                        onChange={(e) => setNewComment(e.target.value)}
+                        placeholder="Write a comment..."
+                        className="w-full p-4 border border-gray-300 rounded-xl resize-none focus:ring-2 focus:ring-blue-400 outline-none text-gray-700"
+                        rows={4}
+                    />
+                        <div className="mt-4 flex gap-3 justify-end">
+                            <button
+                                onClick={handleSubmit}
+                                disabled={!newComment.trim()}
+                                className={`px-6 py-2 rounded-xl text-white transition ${
+                                    newComment.trim() ? "bg-blue-600 hover:bg-blue-700" : "bg-blue-400 cursor-not-allowed"
+                                }`}
+                            >
+                                Post Comment
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Comments section */}
+                <div
+                    ref={commentsContainerRef}
+                    className="bg-white p-7 rounded-2xl shadow-sm border border-gray-100 max-h-[70vh] overflow-y-auto"
+                >
+                    <h2 className="text-2xl font-semibold mb-6 text-gray-900">
+                        Comments {comments.length > 0 && `(${comments.length})`}
+                    </h2>
+
+                    {comments.length === 0 ? (
+                        <div className="text-center py-16 text-gray-500">No comments yet • Be the first!</div>
+                    ) : (
+                        renderCommentsFn(comments)
                     )}
-                    <button
-                        onClick={handleSubmitComment}
-                        className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
-                    >
-                        Post
-                    </button>
                 </div>
             </div>
+        </>
 
-            {/* Comments */}
-            <div className="mt-6">
-                <h2 className="text-xl font-semibold mb-3">Comments</h2>
-
-                {loadingComments ? (
-                    <div className="animate-pulse space-y-3">
-                        {[...Array(5)].map((_, i) => (
-                            <div key={i} className="h-16 bg-gray-200 rounded"></div>
-                        ))}
-                    </div>
-                ) : comments.length ? (
-                    renderComments(comments)
-                ) : (
-                    <p className="text-gray-500">No comments yet.</p>
-                )}
-
-                {/* Pagination */}
-                {pagination.totalPages > 1 && (
-                    <div className="flex justify-center gap-4 mt-4">
-                        <button
-                            disabled={pagination.page === 1 || loadingComments}
-                            onClick={() => loadCommentsPage(pagination.page - 1)}
-                            className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50"
-                        >
-                            ← Previous
-                        </button>
-                        <span className="px-2 py-2 text-gray-700">
-              Page {pagination.page} of {pagination.totalPages}
-            </span>
-                        <button
-                            disabled={pagination.page === pagination.totalPages || loadingComments}
-                            onClick={() => loadCommentsPage(pagination.page + 1)}
-                            className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50"
-                        >
-                            Next →
-                        </button>
-                    </div>
-                )}
-            </div>
-        </div>
     );
 }

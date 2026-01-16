@@ -1,18 +1,36 @@
-import {Router} from "express";
+import express from "express";
 import {
-    createComment, createPost,
+    createPost,
     getAllPosts,
     getPost,
-    toggleFavorite,
+    createComment,
+    updateComment,
+    deleteComment,
+    toggleLike,
+    toggleDislike,
 } from "../controllers/commentController";
 import {protect} from "../middleware/authMiddleware";
 
-const router = Router();
+const router = express.Router();
 
-router.post('/create', protect, createPost)
+/**
+ * POST ROUTES
+ */
+router.post("/create", protect, createPost);
 router.get("/get/all", getAllPosts);
-router.post("/comment/create", protect, createComment);
 router.get("/:postId", getPost);
-router.patch("/:commentId/favorite", protect, toggleFavorite);
+
+/**
+ * COMMENT ROUTES
+ */
+router.post("/comment/create", protect, createComment);
+router.patch("/comment/:commentId", protect, updateComment);
+router.delete("/comment/:commentId", protect, deleteComment);
+
+/**
+ * REACTION ROUTES
+ */
+router.patch("/comment/:commentId/like", protect, toggleLike);
+router.patch("/comment/:commentId/dislike", protect, toggleDislike);
 
 export default router;

@@ -1,7 +1,7 @@
-import React, { useEffect } from "react";
-import { useDispatch, useSelector } from "react-redux";
-import type { RootState } from "~/store";
-import { fetchPostsRequest } from "~/store/posts/postSlice";
+import React, {useEffect} from "react";
+import {useDispatch, useSelector} from "react-redux";
+import type {RootState} from "~/store";
+import {fetchPostsRequest} from "~/store/posts/postSlice";
 import PostList from "~/components/PostList";
 
 export default function PostListContainer() {
@@ -15,37 +15,36 @@ export default function PostListContainer() {
     } = useSelector((state: RootState) => state.posts);
 
     useEffect(() => {
-        // Fetch first page
-        dispatch(fetchPostsRequest({ page: 1 }));
+        dispatch(fetchPostsRequest({page: 1}));
     }, [dispatch]);
 
     const handlePrev = () => {
-        if (postsPage > 1) dispatch(fetchPostsRequest({ page: postsPage - 1 }));
+        if (postsPage > 1) dispatch(fetchPostsRequest({page: postsPage - 1}));
     };
 
     const handleNext = () => {
         if (postsPage < postsTotalPages)
-            dispatch(fetchPostsRequest({ page: postsPage + 1 }));
+            dispatch(fetchPostsRequest({page: postsPage + 1}));
     };
 
-    // Map backend _id → frontend id
-    const mappedPosts = posts.map((p: any) => ({
+    // Map backend _id → frontend id safely
+    const mappedPosts = posts?.map((p) => ({
         id: p._id,
         title: p.title,
         description: p.description,
         date: p.date,
-    }));
+    })) || [];
+
+    console.log(posts)
 
     return (
         <div className="container mx-auto px-4 py-8">
-            {/* Error */}
             {postsError && (
                 <div className="flex justify-center mb-4">
                     <p className="text-red-500">{postsError}</p>
                 </div>
             )}
 
-            {/* Posts or Skeleton */}
             {postsLoading && posts.length === 0 ? (
                 <div className="grid gap-8 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
                     {[...Array(6)].map((_, i) => (
@@ -63,10 +62,9 @@ export default function PostListContainer() {
                     ))}
                 </div>
             ) : (
-                <PostList posts={mappedPosts} />
+                <PostList posts={mappedPosts}/>
             )}
 
-            {/* Pagination */}
             <div className="flex justify-center gap-4 mt-8">
                 <button
                     onClick={handlePrev}
