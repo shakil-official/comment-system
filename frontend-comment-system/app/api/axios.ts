@@ -1,7 +1,9 @@
 import axios from "axios";
 
+console.log(import.meta.env.VITE_API_BASE_URL)
+
 const api = axios.create({
-    baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api",
+    baseURL: import.meta.env.VITE_API_BASE_URL || "https://comment-system-backend-l30w.onrender.com/api",
     timeout: 10000,
     headers: {
         "Content-Type": "application/json",
